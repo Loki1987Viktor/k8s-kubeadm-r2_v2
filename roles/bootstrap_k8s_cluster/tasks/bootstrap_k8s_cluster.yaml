@@ -10,13 +10,13 @@
       - /etc/cni/net.d/
       - /etc/kubernetes/tmp/
 
- - name: "STAGE_[ 5.2.1 ] --- wait for containerd to recover after reset"
-    ansible.builtin.command: crictl info
-    register: crictl_check
-    retries: 10
-    delay: 3
-    until: crictl_check.rc == 0
-    changed_when: false
+  - name: "STAGE_[ 5.2.1 ] --- wait for containerd to recover after reset"
+     ansible.builtin.command: crictl info
+     register: crictl_check
+     retries: 10
+     delay: 3
+     until: crictl_check.rc == 0
+     changed_when: false
       
   - name: "STAGE_[ 5.3 of 18 ] --- copy kubeadm init config"
     template:
