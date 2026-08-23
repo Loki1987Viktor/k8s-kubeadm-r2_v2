@@ -24,6 +24,14 @@
       dest: /home/{{ os_admin_username }}/cluster_init_config.yaml
       mode: 0644
 
+  - name: "STAGE_[ 5.3.5 ] --- pre-pull control-plane images before init"
+    ansible.builtin.command: kubeadm config images pull --config /home/{{ os_admin_username }}/cluster_init_config.yaml
+    register: images_pull
+    retries: 5
+    delay: 5
+    until: images_pull.rc == 0
+    changed_when: false
+
   - name: "STAGE_[ 5.4 of 18 ] --- kubernetes cluster bootstrap"
     shell: |
       kubeadm init --config "/home/{{ os_admin_username }}/cluster_init_config.yaml" --upload-certs
