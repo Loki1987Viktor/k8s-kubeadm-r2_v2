@@ -1,175 +1,158 @@
 ---
+- name: Waiting till all master and worker nodes be available via SSH, check each 10
+  wait_for:
+    host: "{{ item }}"
+    port: 22
+    sleep: 10
+    delay: 10
+    timeout: 600
+  loop: "{{ nodes }}"
+  delegate_to: dvm
 
-#- hosts: masters:workers
-#  become: true
-#  vars_files:
-#    - ./vars/base_vars.yaml
-#
-#  tasks:
-    - name: Waiting till all master and worker nodes be available via SSH, check each 10
-      wait_for:
-        host: "{{ item }}"
-        port: 22
-        sleep: 10
-        delay: 10
-        timeout: 600
-      loop: "{{ nodes }}" #"{{ groups.masters + groups.workers }}"
-      delegate_to: dvm
-#      connection: local
+- name: "check availability for log"
+  ansible.builtin.ping:
 
-  
-#- hosts: masters:workers
-#  gather_facts: true
-#  become: true
-#  vars_files:
-#    - ./vars/base_vars.yaml
-#  
-#  tasks:    
-    - name: "check availability for log"
-      ansible.builtin.ping:
+# ---------------------------------------------------------------- DNS
+# - name: Check whether netplan is used
+#   stat:
+#     path: /etc/netplan
+#   register: netplan_dir
 
-# change DNS server in the netplan config to IP specifical in the target environment
-    - name: "search netplan file with dns configuration"
-      shell: |
-        grep -ilr "{{ def_dns  }}" /etc/netplan
-      register: netplan_path
-      failed_when: netplan_path.rc not in [ 0, 1 ]
+# # Ubuntu (netplan) - выполняется только если /etc/netplan существует
+# - name: DNS via netplan
+#   when: netplan_dir.stat.exists
+#   block:
+#     - name: "search netplan file with dns configuration"
+#       shell: |
+#         grep -ilr "{{ def_dns }}" /etc/netplan
+#       register: netplan_path
+#       changed_when: false
+#       failed_when: netplan_path.rc not in [0, 1]
 
-    - name: "show netplan path"
-      debug:
-        msg:
-          - "netplan config found in:"
-          - "{{ netplan_path.stdout  }}"
-          
-    - name: "get all indents before def_dns - as string variable"
-      shell: |
-        cat "{{ netplan_path.stdout }}" | grep "{{ def_dns  }}"  | cut -d'-' -f1
-      register: indents
+#     - name: "get all indents before def_dns - as string variable"
+#       shell: |
+#         cat "{{ netplan_path.stdout }}" | grep "{{ def_dns }}" | cut -d'-' -f1
+#       register: indents
+#       changed_when: false
+#       when: netplan_path.stdout | length > 0
 
-    - name: "change dns server to environment specific values"
-      replace:
-        path: "{{ netplan_path.stdout }}"
-        regexp: "{{ def_dns }}"
-        replace: "{{ env_dns1 }}\n{{ indents.stdout }}- {{ env_dns2 }}" #10spaces -tabs are not accepted by netplan
+#     - name: "change dns server to environment specific values"
+#       replace:
+#         path: "{{ netplan_path.stdout }}"
+#         regexp: "{{ def_dns }}"
+#         replace: "{{ env_dns1 }}\n{{ indents.stdout }}- {{ env_dns2 }}"
+#       register: netplan_changed
+#       when: netplan_path.stdout | length > 0
 
-      failed_when: netplan_path.rc not in [ 0, 1 ]
+#     - name: "apply netplan after dns change"
+#       command: netplan apply
+#       when: netplan_changed is changed
 
+# Astra / Debian (resolv.conf)
+- name: Set DNS servers in /etc/resolv.conf (Astra / Debian)
+  replace:
+    path: /etc/resolv.conf
+    regexp: '^nameserver\s+{{ def_dns | regex_escape }}\s*$'
+    replace: "nameserver {{ env_dns1 }}\nnameserver {{ env_dns2 }}"
+  when: not netplan_dir.stat.exists
 
+# ---------------------------------------------------------------- Docker repo (containerd.io)
+- name: Create /etc/apt/keyrings
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+  tags: repodocker
 
+- name: Download Docker's official GPG key (Debian)
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/debian/gpg
+    dest: /etc/apt/keyrings/dockergpg
+    mode: '0644'
+  tags: repodocker
 
-    - name: "apply netplan after dns change"
-      shell: |
-        netplan apply
-      
-    - name: Download Docker’s official GPG key
-      ansible.builtin.get_url:
-        url: https://download.docker.com/linux/ubuntu/gpg
-        dest: /etc/apt/keyrings/dockergpg
-        mode: '0644'
-      tags: repodocker
-    
-    - name: check docker.gpg key already exist locally
-      stat:
-        path: /etc/apt/keyrings/docker.gpg
-      register: dockergpg_check
+- name: dearmor docker gpg
+  shell: |
+    gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg /etc/apt/keyrings/dockergpg
+  changed_when: false
+  tags: repodocker
 
-    - name: "remove existing docker.gpg key"
-      file:
-        path:  /etc/apt/keyrings/docker.gpg
-        state: absent
-      when: dockergpg_check.stat.exists
+- name: Add the docker apt repository - for containerd.io
+  ansible.builtin.apt_repository:
+    repo: deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable
+    state: present
+    filename: docker
+    update_cache: true
+  tags: repodocker
 
-    - name: dearmor docker gpg
-      shell: |
-        cat /etc/apt/keyrings/dockergpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-      tags: repodocker
-    #  when: not dockergpg_check.stat.exists
-    #
-    - name: Add the docker apt repository - for containerd.io
-      ansible.builtin.apt_repository:
-        repo: deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu jammy stable
-        state: present
-        filename: docker
-        update_cache: true
-      tags:
-        - repodocker
+# ---------------------------------------------------------------- Packages
+- name: Install required packages
+  apt:
+    update_cache: true
+    name: "{{ item }}"
+    state: present
+  loop:
+#    - rsync
+    - sshpass
+    - whois               # required for 'mkpasswd' command
+    - python3-pip         # required to install kubernetes python package
+    - containerd.io
+    - apt-transport-https # required for kubeadm
+    - ca-certificates     # required for kubeadm
+    - curl                # required for kubeadm
+    - jq
 
-    - name: update apt
-      apt:
-        update_cache: true
-        name: "{{ item }}"
-        state: present
-      loop:
-        - sshpass
-        - whois       # required for 'mkpassword' command
-        - python-pip  # required to install kubernetes python package
-        - python3-pip # required to install kubernetes python package
-        - containerd.io
-        - apt-transport-https # required for kubeadm
-        - ca-certificates     # required for kubeadm
-        - curl                # required for kubeadm
-        - jq
+- name: Install kubernetes python package
+  ansible.builtin.pip:
+    name: "{{ item }}"
+    extra_args: --break-system-packages   # PEP 668 on Debian 12
+  loop:
+    - kubernetes
+    - yq
 
+# ---------------------------------------------------------------- SWAP
+- name: disable swap now
+  command: swapoff -a
+  changed_when: false
 
-    - name: Install kubernetes python package
-      ansible.builtin.pip:
-        name: "{{ item }}"
-      loop:
-        - kubernetes
-        - yq
+- name: comment out active swap entries in fstab
+  replace:
+    path: /etc/fstab
+    regexp: '^([^#\n].*\sswap\s.*)$'
+    replace: '# \1'
 
-    # swap disable:
-    - name: show swapon state
-      debug:
-        msg: "SWAP is enabled, will try to disable it"
-    
-    - name: disable swapon
-      shell: "swapoff -a"
-      register: SWAP_STATE
-       
-    - name: edit fstab to disabe swap on startup
-      lineinfile:
-        path: /etc/fstab
-        regexp: '^/swap'
-        line: '#/swap.img       none    swap    sw      0       0'
-    
-    - name: show swapoff result
-      debug:
-        msg: "swap on {{ inventory_hostname }} is disabled"
+# ---------------------------------------------------------------- containerd / kernel
+- name: create required directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0700'
+  loop:
+    - /etc/containerd
 
-    - name: create required  directories
-      file: 
-        path: "{{ item }}"
-        state: directory
-        mode: 0700
-      loop:
-        - /etc/containerd
+- name: copy additional config for loaded modules
+  copy:
+    src: "./files/load.d_k8s.conf"
+    dest: "/etc/modules-load.d/k8s.conf"
 
-    - name: copy additional config for loaded modules
-      copy:
-        src: "./files/load.d_k8s.conf"
-        dest: "/etc/modules-load.d/k8s.conf"
-    - name: copy additional kernel params config file
-      copy:
-        src: "./files/sysctl.d_k8s.conf"
-        dest: "/etc/sysctl.d/k8s.conf"
-    - name: copy containerd config file
-      copy:
-        src: "./files/containerd_config.toml"
-        dest: "/etc/containerd/config.toml"
-    
-    - name:  apply kernel parameters changes
-      shell: |
-        modprobe overlay
-        modprobe br_netfilter
-        sysctl --system
-    
-    - name: restart containerd
-      systemd:
-        state: restarted
-        daemon_reload: true
-        name: "{{ item }}"
-      loop:
-        - containerd
+- name: copy additional kernel params config file
+  copy:
+    src: "./files/sysctl.d_k8s.conf"
+    dest: "/etc/sysctl.d/k8s.conf"
 
-...
+- name: copy containerd config file
+  copy:
+    src: "./files/containerd_config.toml"
+    dest: "/etc/containerd/config.toml"
+
+- name: apply kernel parameters changes
+  shell: |
+    modprobe overlay
+    modprobe br_netfilter
+    sysctl --system
+
+- name: restart containerd
+  systemd:
+    state: restarted
+    daemon_reload: true
+    name: containerd
