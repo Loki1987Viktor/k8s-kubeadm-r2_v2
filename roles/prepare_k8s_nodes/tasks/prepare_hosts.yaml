@@ -13,40 +13,40 @@
   ansible.builtin.ping:
 
 # ---------------------------------------------------------------- DNS
-# - name: Check whether netplan is used
-#   stat:
-#     path: /etc/netplan
-#   register: netplan_dir
+ - name: Check whether netplan is used
+   stat:
+     path: /etc/netplan
+   register: netplan_dir
 
 # # Ubuntu (netplan) - выполняется только если /etc/netplan существует
-# - name: DNS via netplan
-#   when: netplan_dir.stat.exists
-#   block:
-#     - name: "search netplan file with dns configuration"
-#       shell: |
-#         grep -ilr "{{ def_dns }}" /etc/netplan
-#       register: netplan_path
-#       changed_when: false
-#       failed_when: netplan_path.rc not in [0, 1]
+ - name: DNS via netplan
+   when: netplan_dir.stat.exists
+   block:
+     - name: "search netplan file with dns configuration"
+       shell: |
+         grep -ilr "{{ def_dns }}" /etc/netplan
+       register: netplan_path
+       changed_when: false
+       failed_when: netplan_path.rc not in [0, 1]
 
-#     - name: "get all indents before def_dns - as string variable"
-#       shell: |
-#         cat "{{ netplan_path.stdout }}" | grep "{{ def_dns }}" | cut -d'-' -f1
-#       register: indents
-#       changed_when: false
-#       when: netplan_path.stdout | length > 0
+     - name: "get all indents before def_dns - as string variable"
+       shell: |
+         cat "{{ netplan_path.stdout }}" | grep "{{ def_dns }}" | cut -d'-' -f1
+       register: indents
+       changed_when: false
+       when: netplan_path.stdout | length > 0
 
-#     - name: "change dns server to environment specific values"
-#       replace:
-#         path: "{{ netplan_path.stdout }}"
-#         regexp: "{{ def_dns }}"
-#         replace: "{{ env_dns1 }}\n{{ indents.stdout }}- {{ env_dns2 }}"
-#       register: netplan_changed
-#       when: netplan_path.stdout | length > 0
+     - name: "change dns server to environment specific values"
+       replace:
+         path: "{{ netplan_path.stdout }}"
+         regexp: "{{ def_dns }}"
+         replace: "{{ env_dns1 }}\n{{ indents.stdout }}- {{ env_dns2 }}"
+       register: netplan_changed
+       when: netplan_path.stdout | length > 0
 
-#     - name: "apply netplan after dns change"
-#       command: netplan apply
-#       when: netplan_changed is changed
+     - name: "apply netplan after dns change"
+       command: netplan apply
+       when: netplan_changed is changed
 
 # Astra / Debian (resolv.conf)
 - name: Set DNS servers in /etc/resolv.conf (Astra / Debian)
