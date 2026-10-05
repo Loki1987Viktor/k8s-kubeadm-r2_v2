@@ -12,49 +12,12 @@
 - name: "check availability for log"
   ansible.builtin.ping:
 
-# ---------------------------------------------------------------- DNS
- - name: Check whether netplan is used
-   stat:
-     path: /etc/netplan
-   register: netplan_dir
-
-# # Ubuntu (netplan) - выполняется только если /etc/netplan существует
- - name: DNS via netplan
-   when: netplan_dir.stat.exists
-   block:
-     - name: "search netplan file with dns configuration"
-       shell: |
-         grep -ilr "{{ def_dns }}" /etc/netplan
-       register: netplan_path
-       changed_when: false
-       failed_when: netplan_path.rc not in [0, 1]
-
-     - name: "get all indents before def_dns - as string variable"
-       shell: |
-         cat "{{ netplan_path.stdout }}" | grep "{{ def_dns }}" | cut -d'-' -f1
-       register: indents
-       changed_when: false
-       when: netplan_path.stdout | length > 0
-
-     - name: "change dns server to environment specific values"
-       replace:
-         path: "{{ netplan_path.stdout }}"
-         regexp: "{{ def_dns }}"
-         replace: "{{ env_dns1 }}\n{{ indents.stdout }}- {{ env_dns2 }}"
-       register: netplan_changed
-       when: netplan_path.stdout | length > 0
-
-     - name: "apply netplan after dns change"
-       command: netplan apply
-       when: netplan_changed is changed
-
-# Astra / Debian (resolv.conf)
-- name: Set DNS servers in /etc/resolv.conf (Astra / Debian)
+# ---------------------------------------------------------------- DNS (Astra: resolv.conf)
+- name: Set DNS servers in /etc/resolv.conf
   replace:
     path: /etc/resolv.conf
     regexp: '^nameserver\s+{{ def_dns | regex_escape }}\s*$'
     replace: "nameserver {{ env_dns1 }}\nnameserver {{ env_dns2 }}"
-  when: not netplan_dir.stat.exists
 
 # ---------------------------------------------------------------- Docker repo (containerd.io)
 - name: Create /etc/apt/keyrings
@@ -92,7 +55,7 @@
     name: "{{ item }}"
     state: present
   loop:
-#    - rsync
+    - rsync
     - sshpass
     - whois               # required for 'mkpasswd' command
     - python3-pip         # required to install kubernetes python package
