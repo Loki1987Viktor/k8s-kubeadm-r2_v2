@@ -1,4 +1,5 @@
 
 k8s_nic_name: "ansible_{{ os_nic1_name }}"
-HOST_IP: "{{ hostvars[inventory_hostname][k8s_nic_name].ipv4.address }}"
+HOST_IP: "{{ ansible_default_ipv4.address }}"
+#HOST_IP: "{{ hostvars[inventory_hostname][k8s_nic_name].ipv4.address }}"
 
